@@ -33,4 +33,4 @@ Built with modern web technologies, this platform enables seamless, synchronized
 ### **Other Tools**
 - 🗂️ ESLint + Prettier for clean code
 - 🧰 Vercel for frontend hosting
-- ☁️ Render / Railway for backend deployment
+- ☁️ Render for backend deployment
