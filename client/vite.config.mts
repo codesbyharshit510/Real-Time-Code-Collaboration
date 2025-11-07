@@ -5,6 +5,7 @@ import { defineConfig } from "vite"
 // https://vitejs.dev/config/
 export default defineConfig({
     plugins: [react()],
+    base: "./", // 👈 VERY IMPORTANT for Vercel or relative paths!
     build: {
         chunkSizeWarningLimit: 1600,
         rollupOptions: {
@@ -32,7 +33,7 @@ export default defineConfig({
     preview: {
         port: 5173
     },
-    server:{
+    server: {
         open: true,
-    }
+    },
 })
