@@ -11,13 +11,15 @@ dotenv.config()
 
 const app = express()
 
-// ✅ CORS configuration for Vercel frontend + local development
+// ========================== ✅ Dynamic CORS Configuration ==========================
+const allowedOrigins = [
+  process.env.FRONTEND_URL || "http://localhost:5173",
+  "http://localhost:5173" // always keep localhost for dev
+]
+
 app.use(
   cors({
-    origin: [
-      "https://real-time-code-collaboration-yf6s.vercel.app", // Deployed frontend
-      "http://localhost:5173" // Local Vite dev
-    ],
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true
   })
@@ -25,61 +27,50 @@ app.use(
 
 app.use(express.json())
 
-// ✅ Serve static files from public (for any assets)
+// ✅ Serve static files (optional — for any public assets)
 app.use(express.static(path.join(__dirname, "public")))
 
 const server = http.createServer(app)
 
-// ✅ Socket.io server with same CORS whitelist
+// ========================== ✅ Socket.IO Setup ==========================
 const io = new Server(server, {
   cors: {
-    origin: [
-      "https://real-time-code-collaboration-yf6s.vercel.app",
-      "http://localhost:5173"
-    ],
+    origin: allowedOrigins,
     methods: ["GET", "POST"]
   },
   maxHttpBufferSize: 1e8,
   pingTimeout: 60000
 })
 
+// ========================== Users Map ==========================
 let userSocketMap: User[] = []
 
-// ========================== Utility Functions ==========================
+// Utility functions
 function getUsersInRoom(roomId: string): User[] {
-  return userSocketMap.filter((user) => user.roomId == roomId)
+  return userSocketMap.filter((user) => user.roomId === roomId)
 }
 
 function getRoomId(socketId: SocketId): string | null {
-  const roomId = userSocketMap.find((user) => user.socketId === socketId)?.roomId
-  if (!roomId) {
-    console.error("Room ID is undefined for socket ID:", socketId)
-    return null
-  }
-  return roomId
+  return userSocketMap.find((user) => user.socketId === socketId)?.roomId || null
 }
 
 function getUserBySocketId(socketId: SocketId): User | null {
-  const user = userSocketMap.find((user) => user.socketId === socketId)
-  if (!user) {
-    console.error("User not found for socket ID:", socketId)
-    return null
-  }
-  return user
+  return userSocketMap.find((user) => user.socketId === socketId) || null
 }
 
-// ========================== Socket.IO Logic ==========================
+// ========================== Socket Events ==========================
 io.on("connection", (socket) => {
+  // ---- JOIN REQUEST ----
   socket.on(SocketEvent.JOIN_REQUEST, ({ roomId, username }) => {
-    const isUsernameExist = getUsersInRoom(roomId).filter(
+    const isUsernameExist = getUsersInRoom(roomId).some(
       (u) => u.username === username
     )
-    if (isUsernameExist.length > 0) {
+    if (isUsernameExist) {
       io.to(socket.id).emit(SocketEvent.USERNAME_EXISTS)
       return
     }
 
-    const user = {
+    const user: User = {
       username,
       roomId,
       status: USER_CONNECTION_STATUS.ONLINE,
@@ -88,13 +79,16 @@ io.on("connection", (socket) => {
       socketId: socket.id,
       currentFile: null
     }
+
     userSocketMap.push(user)
     socket.join(roomId)
     socket.broadcast.to(roomId).emit(SocketEvent.USER_JOINED, { user })
+
     const users = getUsersInRoom(roomId)
     io.to(socket.id).emit(SocketEvent.JOIN_ACCEPTED, { user, users })
   })
 
+  // ---- DISCONNECT ----
   socket.on("disconnecting", () => {
     const user = getUserBySocketId(socket.id)
     if (!user) return
@@ -104,186 +98,29 @@ io.on("connection", (socket) => {
     socket.leave(roomId)
   })
 
-  // ========================== File Events ==========================
-  socket.on(
-    SocketEvent.SYNC_FILE_STRUCTURE,
-    ({ fileStructure, openFiles, activeFile, socketId }) => {
-      io.to(socketId).emit(SocketEvent.SYNC_FILE_STRUCTURE, {
-        fileStructure,
-        openFiles,
-        activeFile
-      })
-    }
-  )
-
-  socket.on(SocketEvent.DIRECTORY_CREATED, ({ parentDirId, newDirectory }) => {
+  // ---- Other Events ----
+  socket.onAny((event, data) => {
     const roomId = getRoomId(socket.id)
     if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.DIRECTORY_CREATED, {
-      parentDirId,
-      newDirectory
-    })
-  })
-
-  socket.on(SocketEvent.DIRECTORY_UPDATED, ({ dirId, children }) => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.DIRECTORY_UPDATED, {
-      dirId,
-      children
-    })
-  })
-
-  socket.on(SocketEvent.DIRECTORY_RENAMED, ({ dirId, newName }) => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.DIRECTORY_RENAMED, {
-      dirId,
-      newName
-    })
-  })
-
-  socket.on(SocketEvent.DIRECTORY_DELETED, ({ dirId }) => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.DIRECTORY_DELETED, { dirId })
-  })
-
-  socket.on(SocketEvent.FILE_CREATED, ({ parentDirId, newFile }) => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.FILE_CREATED, {
-      parentDirId,
-      newFile
-    })
-  })
-
-  socket.on(SocketEvent.FILE_UPDATED, ({ fileId, newContent }) => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.FILE_UPDATED, {
-      fileId,
-      newContent
-    })
-  })
-
-  socket.on(SocketEvent.FILE_RENAMED, ({ fileId, newName }) => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.FILE_RENAMED, {
-      fileId,
-      newName
-    })
-  })
-
-  socket.on(SocketEvent.FILE_DELETED, ({ fileId }) => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.FILE_DELETED, { fileId })
-  })
-
-  // ========================== User Status ==========================
-  socket.on(SocketEvent.USER_OFFLINE, ({ socketId }) => {
-    userSocketMap = userSocketMap.map((user) =>
-      user.socketId === socketId
-        ? { ...user, status: USER_CONNECTION_STATUS.OFFLINE }
-        : user
-    )
-    const roomId = getRoomId(socketId)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.USER_OFFLINE, { socketId })
-  })
-
-  socket.on(SocketEvent.USER_ONLINE, ({ socketId }) => {
-    userSocketMap = userSocketMap.map((user) =>
-      user.socketId === socketId
-        ? { ...user, status: USER_CONNECTION_STATUS.ONLINE }
-        : user
-    )
-    const roomId = getRoomId(socketId)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.USER_ONLINE, { socketId })
-  })
-
-  // ========================== Chat ==========================
-  socket.on(SocketEvent.SEND_MESSAGE, ({ message }) => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.RECEIVE_MESSAGE, { message })
-  })
-
-  // ========================== Typing + Cursor ==========================
-  socket.on(
-    SocketEvent.TYPING_START,
-    ({ cursorPosition, selectionStart, selectionEnd }) => {
-      userSocketMap = userSocketMap.map((user) =>
-        user.socketId === socket.id
-          ? { ...user, typing: true, cursorPosition, selectionStart, selectionEnd }
-          : user
-      )
-      const user = getUserBySocketId(socket.id)
-      if (!user) return
-      const roomId = user.roomId
-      socket.broadcast.to(roomId).emit(SocketEvent.TYPING_START, { user })
-    }
-  )
-
-  socket.on(SocketEvent.TYPING_PAUSE, () => {
-    userSocketMap = userSocketMap.map((user) =>
-      user.socketId === socket.id ? { ...user, typing: false } : user
-    )
-    const user = getUserBySocketId(socket.id)
-    if (!user) return
-    const roomId = user.roomId
-    socket.broadcast.to(roomId).emit(SocketEvent.TYPING_PAUSE, { user })
-  })
-
-  socket.on(
-    SocketEvent.CURSOR_MOVE,
-    ({ cursorPosition, selectionStart, selectionEnd }) => {
-      userSocketMap = userSocketMap.map((user) =>
-        user.socketId === socket.id
-          ? { ...user, cursorPosition, selectionStart, selectionEnd }
-          : user
-      )
-      const user = getUserBySocketId(socket.id)
-      if (!user) return
-      const roomId = user.roomId
-      socket.broadcast.to(roomId).emit(SocketEvent.CURSOR_MOVE, { user })
-    }
-  )
-
-  // ========================== Drawing Events ==========================
-  socket.on(SocketEvent.REQUEST_DRAWING, () => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.REQUEST_DRAWING, { socketId: socket.id })
-  })
-
-  socket.on(SocketEvent.SYNC_DRAWING, ({ drawingData, socketId }) => {
-    socket.broadcast.to(socketId).emit(SocketEvent.SYNC_DRAWING, { drawingData })
-  })
-
-  socket.on(SocketEvent.DRAWING_UPDATE, ({ snapshot }) => {
-    const roomId = getRoomId(socket.id)
-    if (!roomId) return
-    socket.broadcast.to(roomId).emit(SocketEvent.DRAWING_UPDATE, { snapshot })
+    socket.broadcast.to(roomId).emit(event, data)
   })
 })
 
 // ========================== Routes ==========================
-const PORT = process.env.PORT || 3000
-
 app.get("/", (req: Request, res: Response) => {
-  res.sendFile(path.join(__dirname, "..", "public", "index.html"))
+  res.status(200).json({
+    message: "Welcome to the Real-Time Code Collaboration Backend 🚀",
+    frontend: process.env.FRONTEND_URL || "not configured"
+  })
 })
 
-// ✅ Health check route for Render uptime monitoring
 app.get("/health", (req: Request, res: Response) => {
   res.status(200).json({ status: "ok", message: "Backend is running 🚀" })
 })
 
 // ========================== Server Start ==========================
+const PORT = process.env.PORT || 3000
 server.listen(PORT, () => {
-  console.log(`Listening on port ${PORT}`)
+  console.log(`✅ Server running on port ${PORT}`)
+  console.log(`🌐 Allowed Origins: ${allowedOrigins.join(", ")}`)
 })
