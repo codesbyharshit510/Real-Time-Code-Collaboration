@@ -52,12 +52,13 @@ const SocketProvider = ({ children }: { children: ReactNode }) => {
       reconnectionDelay: 1000,
     });
 
-    s.on("connect", () => {
-      console.log("✅ Connected to backend:", s.id);
-      toast.dismiss();
-      toast.success("Connected to server");
-      setStatus(USER_STATUS.ONLINE);
-    });
+ s.on("connect", () => {
+  console.log("✅ Connected to backend:", s.id);
+  toast.dismiss();
+  toast.success("Connected to server");
+  setStatus(USER_STATUS.JOINED);
+});
+
 
     s.on("connect_error", (err) => {
       console.error("❌ Socket connection error:", err.message);
